@@ -129,7 +129,7 @@ class AboutSetting(models.Model):
     feature2_title = models.CharField(max_length=100, default="Exam Targeted")
     feature2_desc = models.TextField(default="Curated content for NEET, JEE, UPSC, SSC, and more.")
     feature3_icon = models.CharField(max_length=50, default="fa-solid fa-comments")
-    feature3_icon_color = models.CharField(max_length=20, default="#ffc107")
+    feature3_icon_color = models.CharField(max_width=20, default="#ffc107")
     feature3_title = models.CharField(max_length=100, default="Support")
     feature3_desc = models.TextField(default="Support available on WhatsApp during working hours.")
     is_active = models.BooleanField(default=True)
@@ -287,16 +287,16 @@ class ELibraryPDF(models.Model):
     pdf_file = models.FileField(upload_to='elibrary/pdfs/')
     dropbox_path = models.CharField(max_length=500, blank=True, null=True)
     is_active = models.BooleanField(default=True)
-    # ── NEW: mark a PDF as a free demo accessible without purchase ────────────
     is_demo = models.BooleanField(
         default=False,
         verbose_name='Free Demo',
         help_text='Tick this to make the PDF freely accessible to all visitors as a demo preview.'
     )
+    display_order = models.PositiveIntegerField(default=0, verbose_name='Display Order')
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ['uploaded_at']
+        ordering = ['display_order', 'uploaded_at']
         verbose_name = "E-Library PDF"
         verbose_name_plural = "E-Library PDFs"
 

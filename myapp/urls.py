@@ -81,6 +81,8 @@ urlpatterns = [
     path('elibrary/delete/<uuid:id>/', views.elibrary_delete, name='elibrary_delete'),
     path('elibrary/<uuid:pk>/upload-pdf/', views.elibrary_upload_pdf, name='elibrary_upload_pdf'),
     path('elibrary/pdf/delete/<uuid:pk>/', views.elibrary_pdf_delete, name='elibrary_pdf_delete'),
+    path('elibrary/pdf/replace/<uuid:pk>/', views.elibrary_pdf_replace, name='elibrary_pdf_replace'),
+    path('elibrary/<uuid:pk>/reorder-pdfs/', views.elibrary_pdf_reorder, name='elibrary_pdf_reorder'),
 
     # PDF proxy — streams Dropbox file through Django (no client-side Dropbox auth)
     path('elibrary/pdf/<uuid:pdf_id>/preview/', views.elibrary_pdf_preview, name='elibrary_pdf_preview'),
@@ -104,7 +106,7 @@ urlpatterns = [
     # DB Backup & Restore Panel
     path('db-backup/', backup_panel, name='backup_panel'),
 
-    # ── Catch-all 404 ─────────────────────────────────────────────────────────────────────
+    # ── Catch-all 404 ─────────────────────────────────────────────────────────────────────────────────
     re_path(r'^(?!media/|static/).*$', views.custom_404_view, name='custom_404'),
 ]
 
