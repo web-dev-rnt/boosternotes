@@ -7,7 +7,7 @@ from dropbox import Dropbox, exceptions
 from dropbox.exceptions import ApiError
 
 
-# ── Canonical path builder ────────────────────────────────────────────────────────────
+# ── Canonical path builder ─────────────────────────────────────────────────────────
 class DropboxPaths:
     """
     Single source of truth for every Dropbox folder/path used in the app.
@@ -34,7 +34,7 @@ class DropboxPaths:
 
     ROOT = "BoosterNotes"
 
-    # ─ top-level folders ─────────────────────────────────────────────────────────
+    # ─ top-level folders ───────────────────────────────────────────────────────────────
     BACKUPS   = f"{ROOT}/Backups"
     ELIBRARY  = f"{ROOT}/eLibrary"
     HARDBOOKS = f"{ROOT}/HardBooks"
@@ -42,7 +42,6 @@ class DropboxPaths:
     @staticmethod
     def _slug(name: str) -> str:
         """Turn an arbitrary string into a safe Dropbox folder name."""
-        # Replace characters Dropbox dislikes with underscores, collapse runs
         safe = re.sub(r'[\\/:*?"<>|]+', '_', name).strip('. ')
         safe = re.sub(r'_+', '_', safe)
         return safe or 'Unnamed'
@@ -50,34 +49,28 @@ class DropboxPaths:
     # ─ backup paths ────────────────────────────────────────────────────────────────
     @classmethod
     def backup_latest(cls) -> str:
-        """Full Dropbox path for the rolling latest DB backup."""
         return f"/{cls.BACKUPS}/db_latest.sqlite3"
 
     @classmethod
     def backup_timestamped(cls, timestamp: str) -> str:
-        """Full Dropbox path for a timestamped DB backup."""
         return f"/{cls.BACKUPS}/db_{timestamp}.sqlite3"
 
     @classmethod
     def backups_folder(cls) -> str:
-        """Folder path (no leading slash) used as the `folder_path` arg."""
         return cls.BACKUPS
 
-    # ─ eLibrary paths ────────────────────────────────────────────────────────────
+    # ─ eLibrary paths ───────────────────────────────────────────────────────────────
     @classmethod
     def elibrary_pdfs(cls, course_name: str) -> str:
-        """Folder path (no leading slash) for a course's PDFs."""
         return f"{cls.ELIBRARY}/{cls._slug(course_name)}/PDFs"
 
     @classmethod
     def elibrary_images(cls, course_name: str) -> str:
-        """Folder path (no leading slash) for a course's Images."""
         return f"{cls.ELIBRARY}/{cls._slug(course_name)}/Images"
 
-    # ─ HardBook paths ────────────────────────────────────────────────────────────
+    # ─ HardBook paths ───────────────────────────────────────────────────────────────
     @classmethod
     def hardbooks_images(cls) -> str:
-        """Folder path (no leading slash) for hard-book images."""
         return f"{cls.HARDBOOKS}/Images"
 
 
@@ -92,15 +85,12 @@ class DropboxManager:
             app_secret=settings.DROPBOX_APP_SECRET,
         )
 
-    # ── helpers ──────────────────────────────────────────────────────────────────────────
     @staticmethod
     def _read_chunk(file_obj, size):
-        """Read exactly `size` bytes (or fewer at EOF)."""
         return file_obj.read(size)
 
     @staticmethod
     def _upload_with_retry(fn, *args, retries=3, backoff=2, **kwargs):
-        """Call `fn(*args, **kwargs)` up to `retries` times on transient errors."""
         last_exc = None
         for attempt in range(retries):
             try:
@@ -111,17 +101,42 @@ class DropboxManager:
                     time.sleep(backoff * (attempt + 1))
         raise last_exc
 
-    # ── public API ─────────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _get_file_size(file_obj) -> int:
+        """
+        Robustly determine the byte size of any file-like object.
+
+        Works with:
+          - Django InMemoryUploadedFile / TemporaryUploadedFile  (.size attr)
+          - django.core.files.base.ContentFile  (.size may be set manually)
+          - Raw io.BytesIO / any seekable stream  (seek to end)
+        """
+        # 1. Prefer an explicit .size attribute (set by Django or by the caller)
+        size = getattr(file_obj, 'size', None)
+        if size is not None:
+            return int(size)
+
+        # 2. Fallback: seek to end, record position, seek back
+        try:
+            current = file_obj.tell()
+            file_obj.seek(0, 2)       # SEEK_END
+            size = file_obj.tell()
+            file_obj.seek(current)    # restore
+            return size
+        except Exception:
+            pass
+
+        # 3. Last resort: read all bytes, then seek back
+        file_obj.seek(0)
+        data = file_obj.read()
+        file_obj.seek(0)
+        return len(data)
+
+    # ── public API ──────────────────────────────────────────────────────────────────
     @staticmethod
     def get_temporary_link(dropbox_path):
         """
         Return a short-lived (~4 hours) direct HTTPS link to a Dropbox file.
-
-        Unlike shared links, temporary links:
-          - Require NO Dropbox login from the end-user.
-          - Open / stream the file directly in the browser.
-          - Cannot be listed or discovered — they are opaque one-time URLs.
-
         Returns the URL string on success, or None on failure.
         """
         try:
@@ -136,16 +151,15 @@ class DropboxManager:
     @staticmethod
     def upload_file(file_obj, file_name, folder_path=None):
         """
-        Upload a file to Dropbox using simple upload for files <= 4 MB,
-        and upload sessions (chunked) for larger files.
+        Upload a file to Dropbox.
 
-        `folder_path` should be a path string WITHOUT a leading slash, e.g.:
-            DropboxPaths.elibrary_pdfs(course.name)
-            DropboxPaths.elibrary_images(course.name)
-            DropboxPaths.hardbooks_images()
-            DropboxPaths.backups_folder()
+        Uses simple upload for files <= 4 MB, chunked upload sessions for
+        larger files.  Works with any file-like object (InMemoryUploadedFile,
+        TemporaryUploadedFile, ContentFile, BytesIO, etc.).
 
-        Returns a dict with keys: success, dropbox_path, link, message / error.
+        `folder_path` should be a path string WITHOUT a leading slash.
+
+        Returns a dict: {success, dropbox_path, link, message | error}.
         """
         try:
             dbx = DropboxManager.get_dropbox_client()
@@ -158,11 +172,13 @@ class DropboxManager:
             full_path   = f"/{folder_path}/{file_name}"
 
             file_obj.seek(0)
-            file_size  = file_obj.size          # InMemoryUploadedFile / TemporaryUploadedFile
-            CHUNK_SIZE = 4 * 1024 * 1024        # 4 MB
+            # ── Use the robust helper — never crashes on ContentFile ─────────────
+            file_size  = DropboxManager._get_file_size(file_obj)
+            file_obj.seek(0)          # ensure we're back at the start
+            CHUNK_SIZE = 4 * 1024 * 1024   # 4 MB
 
             if file_size <= CHUNK_SIZE:
-                # ── simple upload ──────────────────────────────────────────────────────
+                # ── simple upload ──────────────────────────────────────────────────
                 DropboxManager._upload_with_retry(
                     dbx.files_upload,
                     file_obj.read(),
@@ -170,8 +186,7 @@ class DropboxManager:
                     mode=dropbox.files.WriteMode.overwrite,
                 )
             else:
-                # ── chunked upload session ──────────────────────────────────────────
-                # 1. Start session with the first chunk
+                # ── chunked upload session ───────────────────────────────────────
                 first_chunk = DropboxManager._read_chunk(file_obj, CHUNK_SIZE)
                 session = DropboxManager._upload_with_retry(
                     dbx.files_upload_session_start, first_chunk
@@ -187,16 +202,14 @@ class DropboxManager:
                     mode=dropbox.files.WriteMode.overwrite,
                 )
 
-                # 2. Stream remaining chunks
                 while offset < file_size:
                     remaining = file_size - offset
                     chunk     = DropboxManager._read_chunk(
                         file_obj, min(CHUNK_SIZE, remaining)
                     )
-                    is_last   = (offset + len(chunk)) >= file_size
+                    is_last = (offset + len(chunk)) >= file_size
 
                     if is_last:
-                        # Final chunk — close the session
                         DropboxManager._upload_with_retry(
                             dbx.files_upload_session_finish,
                             chunk, cursor, commit,
@@ -206,17 +219,15 @@ class DropboxManager:
                             dbx.files_upload_session_append_v2,
                             chunk, cursor,
                         )
-                        # Advance cursor AFTER a successful append
                         cursor.offset += len(chunk)
 
                     offset += len(chunk)
 
-            # ── create / fetch shared link ─────────────────────────────────────────
+            # ── create / fetch shared link ─────────────────────────────────────
             try:
                 shared = dbx.sharing_create_shared_link_with_settings(full_path)
                 link   = shared.url
-            except dropbox.exceptions.ApiError as api_err:
-                # Link already exists — retrieve it
+            except dropbox.exceptions.ApiError:
                 try:
                     links = dbx.sharing_list_shared_links(path=full_path, direct_only=True)
                     link  = links.links[0].url if links.links else f"https://www.dropbox.com/home{full_path}"
@@ -252,10 +263,8 @@ class DropboxManager:
         """Delete a file from Dropbox."""
         try:
             dbx = DropboxManager.get_dropbox_client()
-
             if not dropbox_path.startswith("/"):
                 dropbox_path = "/" + dropbox_path.lstrip("/")
-
             dbx.files_delete_v2(dropbox_path)
             return {"success": True, "message": "File deleted successfully"}
         except Exception as e:

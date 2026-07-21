@@ -2,15 +2,17 @@
 pdf_utils.py — Lossless PDF compression before Dropbox upload.
 
 Strategy (in order of preference):
-  1. pikepdf  — strips dead objects, compresses streams, normalises xref tables.
-               Typically achieves 20-60 % reduction on scan-heavy PDFs.
-  2. pypdf    — pure-Python fallback; recompresses content streams with zlib.
-               Lighter savings (~5-20 %) but zero system dependencies.
+  1. pikepdf  — strips dead objects, compresses streams, normalises xref
+               tables, removes unreferenced resources.  Typically achieves
+               20-60 % reduction on real-world PDFs.
+  2. pypdf    — pure-Python fallback; recompresses content streams with
+               zlib level 9.  Lighter savings (~5-20 %) but zero system
+               dependencies beyond the pip package.
   3. passthrough — if both fail, returns the original bytes unchanged so the
                upload always continues.
 
 All compression is *lossless*: text, vector graphics, and already-compressed
-images are never degraded.
+images are never re-encoded or degraded.
 """
 
 import io
@@ -20,24 +22,28 @@ logger = logging.getLogger(__name__)
 
 
 def _compress_with_pikepdf(data: bytes) -> bytes:
-    """Use pikepdf (libqpdf) to linearise and recompress the PDF."""
+    """Use pikepdf (libqpdf) to recompress and normalise the PDF."""
     import pikepdf
 
     with pikepdf.open(io.BytesIO(data)) as pdf:
+        # Remove dead/unreferenced objects before saving
+        pdf.remove_unreferenced_resources()
+
         out = io.BytesIO()
         pdf.save(
             out,
-            compress_streams=True,       # deflate all uncompressed streams
+            compress_streams=True,
             stream_decode_level=pikepdf.StreamDecodeLevel.generalized,
-            recompress_flate=True,       # re-deflate already-flate streams
-            object_stream_mode=pikepdf.ObjectStreamMode.generate,  # pack small objects
-            linearize=False,             # linearisation adds size; skip it
+            recompress_flate=True,
+            object_stream_mode=pikepdf.ObjectStreamMode.generate,
+            normalise_content=True,   # canonicalise content streams
+            linearize=False,
         )
         return out.getvalue()
 
 
 def _compress_with_pypdf(data: bytes) -> bytes:
-    """Use pypdf to rewrite the PDF with compressed streams."""
+    """Use pypdf to rewrite the PDF with maximum zlib compression."""
     from pypdf import PdfReader, PdfWriter
 
     reader = PdfReader(io.BytesIO(data))
@@ -46,11 +52,21 @@ def _compress_with_pypdf(data: bytes) -> bytes:
     for page in reader.pages:
         writer.add_page(page)
 
-    # Compress every content stream
+    # Max-level deflate on every content stream
     for page in writer.pages:
-        page.compress_content_streams()
+        for filt in getattr(page, 'compress_content_streams', [None]):
+            break
+        try:
+            page.compress_content_streams(level=9)
+        except TypeError:
+            page.compress_content_streams()   # older pypdf without level= kwarg
 
-    # Copy document metadata so nothing is stripped for users
+    # Deduplicate identical indirect objects (images, fonts shared across pages)
+    try:
+        writer.compress_identical_objects(remove_identicals=True, remove_orphans=True)
+    except AttributeError:
+        pass   # older pypdf versions don't have this method
+
     if reader.metadata:
         writer.add_metadata(reader.metadata)
 
@@ -72,32 +88,35 @@ def compress_pdf(file_obj) -> tuple[bytes, int, int, str]:
     file_obj.seek(0)
     original_data = file_obj.read()
     original_size = len(original_data)
+    best_data     = original_data
+    best_size     = original_size
+    best_method   = 'passthrough'
 
-    # ── 1. Try pikepdf ─────────────────────────────────────────────────────────
+    # ── 1. Try pikepdf ────────────────────────────────────────────────────────
     try:
         compressed = _compress_with_pikepdf(original_data)
-        # Only accept if the result is actually smaller (pathological PDFs can
-        # grow slightly after recompression e.g. already-optimal files).
-        if len(compressed) < original_size:
-            return compressed, original_size, len(compressed), 'pikepdf'
-        # pikepdf succeeded but didn't shrink the file — fall through to pypdf
+        if len(compressed) < best_size:
+            best_data   = compressed
+            best_size   = len(compressed)
+            best_method = 'pikepdf'
     except ImportError:
         logger.info('pdf_utils: pikepdf not available, trying pypdf')
     except Exception as exc:
         logger.warning('pdf_utils: pikepdf failed (%s), trying pypdf', exc)
 
-    # ── 2. Try pypdf ───────────────────────────────────────────────────────────
+    # ── 2. Try pypdf (always run — may beat pikepdf on some files) ────────────
     try:
         compressed = _compress_with_pypdf(original_data)
-        if len(compressed) < original_size:
-            return compressed, original_size, len(compressed), 'pypdf'
+        if len(compressed) < best_size:
+            best_data   = compressed
+            best_size   = len(compressed)
+            best_method = 'pypdf'
     except ImportError:
-        logger.info('pdf_utils: pypdf not available, using passthrough')
+        logger.info('pdf_utils: pypdf not available')
     except Exception as exc:
-        logger.warning('pdf_utils: pypdf failed (%s), using passthrough', exc)
+        logger.warning('pdf_utils: pypdf failed (%s)', exc)
 
-    # ── 3. Passthrough — return original unchanged ─────────────────────────────
-    return original_data, original_size, original_size, 'passthrough'
+    return best_data, original_size, best_size, best_method
 
 
 def human_size(n_bytes: int) -> str:
