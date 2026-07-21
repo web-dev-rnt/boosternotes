@@ -403,7 +403,6 @@ def elibrary_add(request):
         form = ELibraryForm(request.POST, request.FILES)
         if form.is_valid():
             course = form.save(commit=False)
-            # Upload thumbnail to BoosterNotes/eLibrary/<course>/Images/
             if 'thumbnail' in request.FILES:
                 thumb_file = request.FILES['thumbnail']
                 result = DropboxManager.upload_file(
@@ -429,7 +428,6 @@ def elibrary_edit(request, pk):
         form = ELibraryForm(request.POST, request.FILES, instance=course)
         if form.is_valid():
             course = form.save(commit=False)
-            # Re-upload thumbnail if a new one was provided
             if 'thumbnail' in request.FILES:
                 thumb_file = request.FILES['thumbnail']
                 result = DropboxManager.upload_file(
@@ -475,14 +473,12 @@ def elibrary_upload_pdf(request, pk):
             uploaded_file = request.FILES['pdf_file']
             original_name = uploaded_file.name
 
-            # ─ compress before upload ───────────────────────────────────────────
             compressed_bytes, orig_size, comp_size, method = compress_pdf(uploaded_file)
             saved_pct = round((1 - comp_size / orig_size) * 100) if orig_size else 0
 
             compressed_file      = ContentFile(compressed_bytes, name=original_name)
             compressed_file.size = comp_size
 
-            # ─ upload to organised Dropbox folder ────────────────────────────
             result = DropboxManager.upload_file(
                 compressed_file,
                 original_name,
@@ -496,7 +492,7 @@ def elibrary_upload_pdf(request, pk):
                 pdf.save()
 
                 if method == 'passthrough' or saved_pct <= 0:
-                    messages.success(request, f'\u2705 PDF uploaded! ({human_size(orig_size)} — already optimal)')
+                    messages.success(request, f'\u2705 PDF uploaded! ({human_size(orig_size)} \u2014 already optimal)')
                 else:
                     messages.success(
                         request,
@@ -964,19 +960,10 @@ def elibrary_pdf_preview(request, pdf_id):
     """
     Stream a PDF file directly from Dropbox through Django.
 
-    The user's browser only ever talks to THIS server — Dropbox is never
-    exposed to the client, so no login wall can appear.
-
     Access rules:
-      - is_staff / is_superuser     → always granted (admin preview)
-      - is_demo=True or first PDF   → public (no login needed)
-      - all others                  → authenticated + paid order required
-
-    Error handling:
-      ANY failure while fetching the file from Dropbox or from the local
-      filesystem (FileNotFoundError, Dropbox ApiError, network error,
-      missing path, etc.) is caught and returns a user-friendly 503 page.
-      No traceback or internal path is ever exposed to the browser.
+      - is_staff / is_superuser     -> always granted (admin preview)
+      - is_demo=True or first PDF   -> public (no login needed)
+      - all others                  -> authenticated + paid order required
 
     ?dl=1  -> Content-Disposition: attachment (download)
     default -> Content-Disposition: inline   (open in browser)
@@ -985,11 +972,9 @@ def elibrary_pdf_preview(request, pdf_id):
 
     pdf = get_object_or_404(ELibraryPDF, id=pdf_id, is_active=True)
 
-    # ── 1. Staff / superuser bypass — admins can always preview any PDF ────
     if request.user.is_authenticated and (request.user.is_staff or request.user.is_superuser):
         can_access = True
     else:
-        # ── 2. First-PDF check ──────────────────────────────────────────────
         first_pdf_id = (
             ELibraryPDF.objects
             .filter(course=pdf.course, is_active=True)
@@ -999,7 +984,6 @@ def elibrary_pdf_preview(request, pdf_id):
         )
         is_first = str(first_pdf_id) == str(pdf_id)
 
-        # ── 3. Access check ────────────────────────────────────────────────
         can_access = pdf.is_demo or is_first
         if not can_access:
             if not request.user.is_authenticated:
@@ -1014,7 +998,6 @@ def elibrary_pdf_preview(request, pdf_id):
     if not can_access:
         raise Http404
 
-    # ── 4. Disposition header ───────────────────────────────────────────────
     force_download = request.GET.get('dl') == '1'
     raw_name   = pdf.pdf_name or 'document'
     filename   = raw_name if raw_name.lower().endswith('.pdf') else raw_name + '.pdf'
@@ -1024,30 +1007,19 @@ def elibrary_pdf_preview(request, pdf_id):
         f'inline; filename="{filename}"'
     )
 
-    # ── 5. Source A: Dropbox ─────────────────────────────────────────────────
     if pdf.dropbox_path:
         try:
             dbx  = DropboxManager.get_dropbox_client()
             path = pdf.dropbox_path if pdf.dropbox_path.startswith('/') else '/' + pdf.dropbox_path
-
-            # Eagerly download the entire file before building the response.
-            # This guarantees that ANY exception (FileNotFoundError, ApiError,
-            # network timeout, quota exceeded, etc.) is raised HERE, inside
-            # this try/except block, and can be turned into a clean error page.
             _metadata, response = dbx.files_download(path)
-            pdf_bytes = response.content   # reads all bytes; raises on any failure
-
+            pdf_bytes = response.content
             http_response = HttpResponse(pdf_bytes, content_type='application/pdf')
             http_response['Content-Disposition'] = disposition
             http_response['Content-Length']      = str(len(pdf_bytes))
             return http_response
-
         except Exception:
-            # Fall through to local-file fallback, then to the
-            # user-friendly unavailable page.
             pass
 
-    # ── 5b. Source B: local FileField (dev / fallback) ──────────────────────
     if pdf.pdf_file:
         try:
             from django.http import FileResponse
@@ -1057,7 +1029,6 @@ def elibrary_pdf_preview(request, pdf_id):
         except Exception:
             pass
 
-    # ── 6. Both sources failed — show the user-friendly error page ──────────
     return _pdf_unavailable_response(request, pdf_name=pdf.pdf_name)
 
 
@@ -1094,4 +1065,107 @@ def apply_coupon(request):
     request.session['applied_coupon_code']   = coupon.code
     request.session['applied_coupon_amount'] = str(coupon.amount)
     messages.success(request, f"\u2705 Coupon '{coupon.code}' saved! \u20b9{coupon.amount} discount will apply at checkout.")
-    return redirec
+    return redirect(redirect_url)
+
+
+# ── Admin Dashboard ─────────────────────────────────────────────────────────────
+@login_required
+def dashboard(request):
+    if not request.user.is_staff and not request.user.is_superuser:
+        messages.error(request, "You don't have permission.")
+        return redirect('home')
+
+    users = User.objects.only('id', 'username', 'email', 'first_name', 'last_name', 'is_active', 'is_staff', 'date_joined').order_by('-date_joined')
+    total_users     = users.count()
+    active_users    = users.filter(is_active=True).count()
+    inactive_users  = users.filter(is_active=False).count()
+    thirty_days_ago = datetime.now() - timedelta(days=30)
+    new_users       = users.filter(date_joined__gte=thirty_days_ago).count()
+    staff_users     = users.filter(is_staff=True).count()
+
+    from .models import Order
+    total_revenue    = Order.objects.filter(is_paid=True).aggregate(r=Sum('grand_total'))['r'] or 0
+    completed_orders = Order.objects.filter(status='paid').count()
+    pending_orders   = Order.objects.filter(status='pending').count()
+    failed_orders    = Order.objects.filter(status='cancelled').count()
+    recent_transactions = Order.objects.select_related('user').prefetch_related('items').order_by('-created_at')[:10]
+
+    return render(request, 'admin_dashboard.html', {
+        'users': users, 'total_users': total_users,
+        'active_users': active_users, 'inactive_users': inactive_users,
+        'new_users': new_users, 'staff_users': staff_users,
+        'form': CustomUserCreationForm(),
+        'total_revenue': total_revenue,
+        'completed_orders': completed_orders,
+        'pending_orders': pending_orders,
+        'failed_orders': failed_orders,
+        'recent_transactions': recent_transactions,
+    })
+
+
+# ── Auth ────────────────────────────────────────────────────────────────────────────
+def user_login(request):
+    if request.user.is_authenticated:
+        return redirect('home')
+    if request.method == 'POST':
+        email    = request.POST.get('email', '').strip().lower()
+        password = request.POST.get('password')
+        try:
+            user_obj = User.objects.get(email__iexact=email)
+        except User.DoesNotExist:
+            messages.error(request, 'No account found with that email address.')
+            return redirect('login')
+        user = authenticate(request, username=user_obj.username, password=password)
+        if user is not None:
+            login(request, user)
+            messages.success(request, 'Login successful!')
+            return redirect(request.POST.get('next') or request.GET.get('next') or 'home')
+        messages.error(request, 'Incorrect password. Please try again.')
+        return redirect('login')
+    return render(request, 'login.html')
+
+
+def signup(request):
+    if request.user.is_authenticated:
+        return redirect('home')
+    if request.method == 'POST':
+        full_name = request.POST.get('name', '').strip()
+        email     = request.POST.get('email', '').strip().lower()
+        password  = request.POST.get('password', '').strip()
+
+        if not full_name or not email or not password:
+            messages.error(request, 'All fields are required.')
+            return redirect('signup')
+
+        if len(password) < 6:
+            messages.error(request, 'Password must be at least 6 characters.')
+            return redirect('signup')
+
+        if User.objects.filter(email__iexact=email).exists():
+            messages.error(request, 'An account with this email already exists. Please login.')
+            return redirect('signup')
+
+        username = email
+
+        try:
+            user = User.objects.create_user(
+                username=username,
+                email=email,
+                password=password,
+                first_name=full_name,
+                is_staff=False,
+                is_superuser=False,
+            )
+            login(request, user)
+            messages.success(request, f'Welcome, {full_name}! Your account has been created.')
+            return redirect('home')
+        except Exception:
+            messages.error(request, 'Something went wrong. Please try again.')
+            return redirect('signup')
+
+    return render(request, 'signup.html')
+
+
+# ── Custom 404 ── works even with DEBUG=True ──────────────────────────────────────
+def custom_404_view(request, unknown_path=None):
+    return render(request, '404.html', status=404)
