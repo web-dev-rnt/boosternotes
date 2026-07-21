@@ -17,6 +17,7 @@ from django.template.loader import render_to_string
 from django.utils import timezone
 from django.utils.timesince import timesince
 from django.core.files.storage import default_storage
+from django.urls import reverse
 import uuid
 
 from .models import *
@@ -465,6 +466,11 @@ def elibrary_upload_pdf(request, pk):
 
     The file is compressed (losslessly) before being sent to Dropbox.
     Storage path: BoosterNotes/eLibrary/<course name>/PDFs/<filename>
+
+    After a successful upload the view returns a JSON response with
+    `redirect` pointing to this same upload page (the correct named URL
+    `elibrary_upload_pdf`) so the AJAX handler in the template can
+    navigate the browser there without hitting a 404.
     """
     course = get_object_or_404(ELibraryModel, pk=pk)
     if request.method == 'POST':
@@ -499,7 +505,11 @@ def elibrary_upload_pdf(request, pk):
                         f'\u2705 PDF uploaded & compressed via {method}! '
                         f'{human_size(orig_size)} \u2192 {human_size(comp_size)} (saved {saved_pct}\u00a0%)'
                     )
-                return JsonResponse({'success': True, 'redirect': f"/elibrary/upload/{course.pk}/"})
+
+                # FIX: use reverse() with the correct named URL so the
+                # redirect lands on the real upload page, not a ghost path.
+                upload_url = reverse('elibrary_upload_pdf', args=[str(course.pk)])
+                return JsonResponse({'success': True, 'redirect': upload_url})
             else:
                 messages.error(request, f"Dropbox upload failed: {result['error']}")
                 return JsonResponse({'error': result['error']}, status=500)
