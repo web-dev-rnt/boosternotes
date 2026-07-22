@@ -74,7 +74,7 @@
             <tr>
               <th>#</th>
               <th>PDF Name</th>
-              <th>Size</th>
+              <th>Replace PDF</th>
               <th>View PDF</th>
               <th>Uploaded</th>
               <th>Status</th>
@@ -93,12 +93,34 @@
                   <span style="display:inline-flex;align-items:center;gap:4px;background:#fff7ed;color:#c05621;border:1px solid #fbd38d;font-size:0.7rem;font-weight:700;padding:2px 8px;border-radius:999px;margin-left:6px;">🆓 Demo</span>
                 {% endif %}
               </td>
-              <td style="color:#888;font-size:0.82rem;">
-                {% if pdf.file_size_bytes %}
-                  {{ pdf.file_size_bytes|filesizeformat }}
-                {% else %}
-                  <span style="color:#ccc;">—</span>
-                {% endif %}
+              <td>
+                <!-- Replace PDF inline form -->
+                <form method="post" action="{% url 'elibrary_pdf_replace' pdf.id %}"
+                      enctype="multipart/form-data"
+                      class="replace-pdf-form"
+                      id="replace-form-{{ pdf.id }}"
+                      onsubmit="return handleReplace(event, '{{ pdf.id }}')">
+                  {% csrf_token %}
+                  <div class="replace-input-wrap">
+                    <label class="replace-file-label" for="replace-file-{{ pdf.id }}" title="Choose new PDF">
+                      <i class="fa-solid fa-file-arrow-up"></i>
+                      <span class="replace-file-text" id="replace-label-{{ pdf.id }}">Choose file</span>
+                    </label>
+                    <input type="file"
+                           name="pdf_file"
+                           id="replace-file-{{ pdf.id }}"
+                           accept="application/pdf,.pdf"
+                           class="replace-file-input"
+                           onchange="onReplaceFileChange(this, '{{ pdf.id }}')">
+                    <button type="submit"
+                            class="btn btn-replace"
+                            id="replace-btn-{{ pdf.id }}"
+                            disabled
+                            title="Upload replacement PDF">
+                      <i class="fa-solid fa-rotate"></i> Replace
+                    </button>
+                  </div>
+                </form>
               </td>
               <td>
                 {% if pdf.dropbox_path or pdf.pdf_file %}
@@ -218,7 +240,7 @@
 .custom-alert-error { background: #ffe8e8; border: 1px solid #ffd8d8; color: #e84444; }
 .messages { margin-bottom: 1rem; }
 .data-table { width: 100%; border-collapse: collapse; }
-.data-table th, .data-table td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+.data-table th, .data-table td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; vertical-align: middle; }
 .data-table th { background: #f8f9fa; font-weight: 600; font-size: 13px; }
 .action-btns { display: flex; gap: 6px; }
 .action-btn { width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; border: 1px solid #e0e4ee; background: #fff; cursor: pointer; color: #666; }
@@ -229,6 +251,28 @@
 .badge-danger { background: #f8d7da; color: #721c24; }
 .file-info-bar { display: flex; align-items: center; gap: 8px; background: #f8f9ff; border: 1px solid #dde2ee; border-radius: 8px; padding: 8px 12px; font-size: 0.85rem; }
 .custom-table-wrap { overflow-x: auto; }
+
+/* ── Replace PDF column ── */
+.replace-input-wrap { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+.replace-file-input { display: none; }
+.replace-file-label {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: 7px; cursor: pointer;
+  background: #f0f4ff; color: #1a3a8f;
+  border: 1.5px dashed #1a3a8f; font-size: 0.78rem; font-weight: 600;
+  white-space: nowrap; max-width: 130px; overflow: hidden; text-overflow: ellipsis;
+  transition: background 0.15s;
+}
+.replace-file-label:hover { background: #dce8ff; }
+.replace-file-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80px; display: inline-block; }
+.btn-replace {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px; border-radius: 7px; font-size: 0.78rem; font-weight: 600;
+  background: linear-gradient(135deg, #1a3a8f, #0d2060); color: #fff;
+  border: none; cursor: pointer; white-space: nowrap; transition: opacity 0.15s;
+}
+.btn-replace:disabled { background: #bbb; cursor: not-allowed; }
+.btn-replace:not(:disabled):hover { opacity: 0.88; }
 
 /* ── Progress Modal ── */
 .upload-modal-overlay { position: fixed; inset: 0; background: rgba(10,20,60,0.55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 1rem; animation: fadeInOverlay 0.25s ease; }
@@ -256,7 +300,7 @@
 const MAX_PDF_MB   = 100;
 const MAX_PDF_BYTES = MAX_PDF_MB * 1024 * 1024;
 
-const fileInput = document.querySelector('input[type="file"]');
+const fileInput = document.querySelector('#pdf-upload-form input[type="file"]');
 const fileInfo  = document.getElementById('file-info');
 const fileNameDisplay = document.getElementById('file-name-display');
 const fileSizeDisplay = document.getElementById('file-size-display');
@@ -280,6 +324,99 @@ if (fileInput) {
       fileInput.value = ''; fileInfo.style.display = 'none';
     }
   });
+}
+
+/* ── Replace PDF: file picker feedback ── */
+function onReplaceFileChange(input, pdfId) {
+  const label = document.getElementById('replace-label-' + pdfId);
+  const btn   = document.getElementById('replace-btn-' + pdfId);
+  if (input.files && input.files.length) {
+    const file   = input.files[0];
+    const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+    label.textContent = file.name + ' (' + sizeMB + ' MB)';
+    if (file.size > MAX_PDF_BYTES) {
+      alert('File is too large (' + sizeMB + ' MB). Maximum allowed is ' + MAX_PDF_MB + ' MB.');
+      input.value = '';
+      label.textContent = 'Choose file';
+      btn.disabled = true;
+      return;
+    }
+    if (file.type && file.type !== 'application/pdf') {
+      alert('Only PDF files are allowed.');
+      input.value = '';
+      label.textContent = 'Choose file';
+      btn.disabled = true;
+      return;
+    }
+    btn.disabled = false;
+  } else {
+    label.textContent = 'Choose file';
+    btn.disabled = true;
+  }
+}
+
+/* ── Replace PDF: XHR submit with progress modal ── */
+function handleReplace(event, pdfId) {
+  event.preventDefault();
+  const form  = document.getElementById('replace-form-' + pdfId);
+  const btn   = document.getElementById('replace-btn-' + pdfId);
+  const input = document.getElementById('replace-file-' + pdfId);
+  if (!input.files || !input.files.length) {
+    alert('Please select a PDF file to replace.');
+    return false;
+  }
+  const file = input.files[0];
+  if (file.size > MAX_PDF_BYTES) {
+    alert('File too large. Max 100 MB.');
+    return false;
+  }
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Replacing…';
+  showUploadModal(file.name, file.size);
+
+  const formData = new FormData(form);
+  const xhr = new XMLHttpRequest();
+  let lastLoaded = 0, lastTime = Date.now();
+
+  xhr.upload.addEventListener('progress', function(evt) {
+    if (!evt.lengthComputable) return;
+    const pct = Math.round((evt.loaded / evt.total) * 100);
+    const now = Date.now();
+    const elapsed = (now - lastTime) / 1000;
+    const speedBps = elapsed > 0 ? (evt.loaded - lastLoaded) / elapsed : 0;
+    const etaSec = speedBps > 0 ? (evt.total - evt.loaded) / speedBps : Infinity;
+    updateProgress(pct, evt.loaded, evt.total, speedBps, etaSec);
+    lastLoaded = evt.loaded; lastTime = now;
+  });
+
+  xhr.addEventListener('load', function() {
+    if (xhr.status >= 200 && xhr.status < 400) {
+      showModalSuccess();
+      setTimeout(function() { window.location.reload(); }, 1800);
+    } else {
+      showModalError('Server error (' + xhr.status + '). Please try again.');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Replace';
+    }
+  });
+
+  xhr.addEventListener('error', function() {
+    showModalError('Network error. Please check your connection.');
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Replace';
+  });
+
+  xhr.timeout = 600000;
+  xhr.addEventListener('timeout', function() {
+    showModalError('Upload timed out. Try a smaller file or check your connection.');
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Replace';
+  });
+
+  xhr.open('POST', form.action, true);
+  xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+  xhr.send(formData);
+  return false;
 }
 
 function formatBytes(bytes) {
