@@ -1,7 +1,5 @@
-# Merge migration: resolves the two leaf nodes in the migration graph:
-#   - 0002_elibrary_dropbox_thumbnail_path  (stray branch off 0001_initial)
-#   - 0025_elibrarypdf_display_order        (main chain tip)
-# This is equivalent to running: python manage.py makemigrations --merge
+# Merge migration: joins the 0002_elibrary_dropbox_thumbnail_path branch
+# (now a no-op stub) with the main chain tip at 0025_elibrarypdf_display_order.
 
 from django.db import migrations
 

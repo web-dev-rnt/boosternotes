@@ -1,4 +1,9 @@
-from django.db import migrations, models
+# This migration originally referenced a model 'elibrarybody' that did not exist
+# in the initial schema. ELibraryModel was introduced in 0013_elibrarymodel_elibrarypdf.
+# The operations have been replaced with no-ops so that environments where this
+# migration was previously recorded as applied continue to work without errors.
+
+from django.db import migrations
 
 
 class Migration(migrations.Migration):
@@ -8,19 +13,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='elibrarymodel',
-            name='dropbox_thumbnail_path',
-            field=models.CharField(blank=True, max_length=500, null=True, verbose_name='Dropbox Thumbnail Path'),
-        ),
-        migrations.AlterField(
-            model_name='elibrarymodel',
-            name='thumbnail',
-            field=models.ImageField(blank=True, null=True, upload_to='elibrary/thumbnails/', verbose_name='Thumbnail Image'),
-        ),
-        migrations.AlterField(
-            model_name='elibrarybody',
-            name='image',
-            field=models.ImageField(blank=True, null=True, upload_to='hardbooks/images/', verbose_name='Book Image'),
-        ),
+        # No operations — original operations removed because they referenced
+        # 'elibrarybody' and 'elibrarymodel' which did not exist at this point
+        # in the migration chain (both were created in migration 0013).
     ]
