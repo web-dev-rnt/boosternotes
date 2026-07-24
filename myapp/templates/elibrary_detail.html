@@ -149,6 +149,30 @@
   }
 </style>
 
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     GA4 Standard Ecommerce — view_item event
+     Fires once on page load. Uses Django template context: pdf (ELibraryModel).
+     GTM trigger: Custom Event — event name = "view_item"
+════════════════════════════════════════════════════════════════════════════ -->
+<script>
+  window.dataLayer = window.dataLayer || [];
+  dataLayer.push({ ecommerce: null }); // clear previous ecommerce object
+  dataLayer.push({
+    event: 'view_item',
+    ecommerce: {
+      currency: 'INR',
+      value: {{ pdf.current_price }},
+      items: [{
+        item_id: '{{ pdf.id }}',
+        item_name: '{{ pdf.name|escapejs }}',
+        item_category: '{% if pdf.category %}{{ pdf.category.name|escapejs }}{% else %}E-Library{% endif %}',
+        price: {{ pdf.current_price }},
+        quantity: 1
+      }]
+    }
+  });
+</script>
+
 <div class="elib-section">
 
   <!-- Back Button -->
@@ -198,14 +222,18 @@
           <div class="purchased-badge">✅ You own this course</div>
         {% else %}
           <div class="elib-actions">
-            <form method="post" action="{% url 'add_to_cart' %}" style="flex:1;display:flex;">
+            <!-- ── Buy Now: fires add_to_cart then submits ── -->
+            <form method="post" action="{% url 'add_to_cart' %}" style="flex:1;display:flex;"
+                  onsubmit="ga4PushAddToCart(event, this, 'checkout');">
               {% csrf_token %}
               <input type="hidden" name="item_id" value="{{ pdf.id }}">
               <input type="hidden" name="item_type" value="pdf">
               <input type="hidden" name="redirect_to" value="checkout">
               <button type="submit" class="buy-btn-search" style="width:100%;">⚡ Buy Now — ₹{{ pdf.current_price|floatformat:0 }}</button>
             </form>
-            <form method="post" action="{% url 'add_to_cart' %}" style="flex:1;display:flex;">
+            <!-- ── Add to Cart: fires add_to_cart then submits ── -->
+            <form method="post" action="{% url 'add_to_cart' %}" style="flex:1;display:flex;"
+                  onsubmit="ga4PushAddToCart(event, this, '');">
               {% csrf_token %}
               <input type="hidden" name="item_id" value="{{ pdf.id }}">
               <input type="hidden" name="item_type" value="pdf">
@@ -292,7 +320,8 @@
                 {{ locked_count }} more PDF{{ locked_count|pluralize }} locked
               </div>
               <div class="lock-text">Purchase this course to unlock all PDFs instantly.</div>
-              <form method="post" action="{% url 'add_to_cart' %}" style="display:inline;">
+              <form method="post" action="{% url 'add_to_cart' %}" style="display:inline;"
+                    onsubmit="ga4PushAddToCart(event, this, 'checkout');">
                 {% csrf_token %}
                 <input type="hidden" name="item_id" value="{{ pdf.id }}">
                 <input type="hidden" name="item_type" value="pdf">
@@ -312,4 +341,32 @@
   </div>
 
 </div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     GA4 Standard Ecommerce — add_to_cart event
+     Called by onsubmit on each cart/buy form above.
+     Pushes the event, then lets the form submit normally.
+════════════════════════════════════════════════════════════════════════════ -->
+<script>
+  function ga4PushAddToCart(e, form, redirectTo) {
+    window.dataLayer = window.dataLayer || [];
+    dataLayer.push({ ecommerce: null });
+    dataLayer.push({
+      event: 'add_to_cart',
+      ecommerce: {
+        currency: 'INR',
+        value: {{ pdf.current_price }},
+        items: [{
+          item_id: '{{ pdf.id }}',
+          item_name: '{{ pdf.name|escapejs }}',
+          item_category: '{% if pdf.category %}{{ pdf.category.name|escapejs }}{% else %}E-Library{% endif %}',
+          price: {{ pdf.current_price }},
+          quantity: 1
+        }]
+      }
+    });
+    // Allow GTM/GA4 a brief moment to capture the event before navigation
+    // Only needed when Razorpay is NOT involved (plain form submit is fine).
+  }
+</script>
 {% endblock content %}

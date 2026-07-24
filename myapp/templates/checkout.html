@@ -37,6 +37,41 @@
   @media(max-width:540px){ .co-form-row{ grid-template-columns:1fr; } }
 </style>
 
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     GA4 Standard Ecommerce — begin_checkout event
+     Fires once per checkout page load.
+     sessionStorage guard prevents re-fire on back-button navigation.
+     GTM trigger: Custom Event — event name = "begin_checkout"
+════════════════════════════════════════════════════════════════════════════ -->
+<script>
+(function() {
+  var cartKey = 'bn_checkout_fired_{{ grand_total }}';
+  if (!sessionStorage.getItem(cartKey)) {
+    sessionStorage.setItem(cartKey, '1');
+    window.dataLayer = window.dataLayer || [];
+    dataLayer.push({ ecommerce: null });
+    dataLayer.push({
+      event: 'begin_checkout',
+      ecommerce: {
+        currency: 'INR',
+        value: {{ grand_total }},
+        coupon: '{% if applied_coupon %}{{ applied_coupon.code|escapejs }}{% endif %}',
+        items: [
+          {% for item in cart_items %}{
+            item_id: '{{ item.id }}',
+            item_name: '{{ item.name|escapejs }}',
+            item_category: '{{ item.item_type|escapejs }}',
+            price: {{ item.price }},
+            quantity: 1
+          }{% if not forloop.last %},{% endif %}
+          {% endfor %}
+        ]
+      }
+    });
+  }
+})();
+</script>
+
 <div class="checkout-page">
   <div class="checkout-inner">
     <div class="pg-icon">💳</div>

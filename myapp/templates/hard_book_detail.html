@@ -306,6 +306,30 @@
   }
 </style>
 
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     GA4 Standard Ecommerce — view_item event
+     Fires once on page load. Uses Django template context: book (HardBook).
+     GTM trigger: Custom Event — event name = "view_item"
+════════════════════════════════════════════════════════════════════════════ -->
+<script>
+  window.dataLayer = window.dataLayer || [];
+  dataLayer.push({ ecommerce: null }); // clear previous ecommerce object
+  dataLayer.push({
+    event: 'view_item',
+    ecommerce: {
+      currency: 'INR',
+      value: {{ book.price }},
+      items: [{
+        item_id: '{{ book.id }}',
+        item_name: '{{ book.title|escapejs }}',
+        item_category: 'Physical Book',
+        price: {{ book.price }},
+        quantity: 1
+      }]
+    }
+  });
+</script>
+
 <div class="book-detail-section">
 
   <!-- Back -->
@@ -387,14 +411,18 @@
 
         <!-- Action buttons -->
         <div class="book-actions">
-          <form method="post" action="{% url 'add_to_cart' %}" style="flex:1;display:flex;">
+          <!-- ── Buy Now: fires add_to_cart then submits ── -->
+          <form method="post" action="{% url 'add_to_cart' %}" style="flex:1;display:flex;"
+                onsubmit="ga4PushBookAddToCart(event, this);">
             {% csrf_token %}
             <input type="hidden" name="item_id" value="{{ book.id }}">
             <input type="hidden" name="item_type" value="book">
             <input type="hidden" name="redirect_to" value="checkout">
             <button type="submit" class="buy-btn-search" style="width:100%;">⚡ Buy Now — ₹{{ book.price|floatformat:0 }}</button>
           </form>
-          <form method="post" action="{% url 'add_to_cart' %}" style="flex:1;display:flex;">
+          <!-- ── Add to Cart: fires add_to_cart then submits ── -->
+          <form method="post" action="{% url 'add_to_cart' %}" style="flex:1;display:flex;"
+                onsubmit="ga4PushBookAddToCart(event, this);">
             {% csrf_token %}
             <input type="hidden" name="item_id" value="{{ book.id }}">
             <input type="hidden" name="item_type" value="book">
@@ -479,5 +507,30 @@ document.addEventListener('keydown', e => {
   if (e.key === 'ArrowLeft') prevImage(e);
   if (e.key === 'ArrowRight') nextImage(e);
 });
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     GA4 Standard Ecommerce — add_to_cart event (Hard Book)
+     Called by onsubmit on each cart/buy form above.
+════════════════════════════════════════════════════════════════════════════ -->
+<script>
+  function ga4PushBookAddToCart(e, form) {
+    window.dataLayer = window.dataLayer || [];
+    dataLayer.push({ ecommerce: null });
+    dataLayer.push({
+      event: 'add_to_cart',
+      ecommerce: {
+        currency: 'INR',
+        value: {{ book.price }},
+        items: [{
+          item_id: '{{ book.id }}',
+          item_name: '{{ book.title|escapejs }}',
+          item_category: 'Physical Book',
+          price: {{ book.price }},
+          quantity: 1
+        }]
+      }
+    });
+  }
 </script>
 {% endblock content %}

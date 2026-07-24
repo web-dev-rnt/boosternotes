@@ -35,6 +35,43 @@
 @media(max-width:480px){ .success-card{padding:32px 20px;} .success-actions{flex-direction:column;} }
 </style>
 
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     GA4 Standard Ecommerce — purchase event
+     Fires ONCE per confirmed order. Guarded by sessionStorage key on order_id
+     so a back-button revisit does NOT re-fire the event.
+     GTM trigger: Custom Event — event name = "purchase"
+     Required fields: transaction_id, value, currency, items[]
+════════════════════════════════════════════════════════════════════════════ -->
+<script>
+(function() {
+  var purchaseKey = 'bn_purchase_fired_{{ order.id }}';
+  if (!sessionStorage.getItem(purchaseKey)) {
+    sessionStorage.setItem(purchaseKey, '1');
+    window.dataLayer = window.dataLayer || [];
+    dataLayer.push({ ecommerce: null });
+    dataLayer.push({
+      event: 'purchase',
+      ecommerce: {
+        transaction_id: '{{ order.order_number }}',
+        value: {{ order.grand_total }},
+        currency: 'INR',
+        coupon: '{% if order.coupon %}{{ order.coupon.code|escapejs }}{% endif %}',
+        items: [
+          {% for item in order.items.all %}{
+            item_id: '{{ item.item_id }}',
+            item_name: '{{ item.item_name|escapejs }}',
+            item_category: '{% if item.item_type == "pdf" %}E-Library{% else %}Physical Book{% endif %}',
+            price: {{ item.item_price }},
+            quantity: {{ item.quantity }}
+          }{% if not forloop.last %},{% endif %}
+          {% endfor %}
+        ]
+      }
+    });
+  }
+})();
+</script>
+
 <div class="success-page">
   <div class="success-card">
     <div class="success-icon">✅</div>
