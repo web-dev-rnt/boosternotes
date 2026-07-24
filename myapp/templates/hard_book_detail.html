@@ -353,15 +353,13 @@
       <span>Physical Book</span>
     </h3>
     <div class="book-overview">
-      <!-- Main image -->
+      <!-- Main image: use preview_url from book_images (set by _attach_preview_urls) -->
       <div class="book-main-img" onclick="openLightbox(0)">
-        {% with images=book.images.all %}
-          {% if images.0 and images.0.image %}
-            <img id="mainBookImg" src="{{ images.0.image.url }}" alt="{{ book.title }}" loading="lazy">
-          {% else %}
-            📗
-          {% endif %}
-        {% endwith %}
+        {% if book_images and book_images.0.preview_url %}
+          <img id="mainBookImg" src="{{ book_images.0.preview_url }}" alt="{{ book.title }}" loading="lazy">
+        {% else %}
+          📗
+        {% endif %}
       </div>
 
       <!-- Info -->
@@ -434,19 +432,18 @@
   </div>
 
   <!-- Image Gallery Group -->
-  {% with images=book.images.all %}
   <div class="book-group">
     <h3 class="book-group-title">
       <i class="fa-solid fa-images" style="color:#1a3a8f;"></i> Book Images
-      <span>{{ images|length }} Photo{{ images|length|pluralize }}</span>
+      <span>{{ book_images|length }} Photo{{ book_images|length|pluralize }}</span>
     </h3>
 
-    {% if images %}
+    {% if book_images %}
       <div class="gallery-grid">
-        {% for img in images %}
-          {% if img.image %}
+        {% for img in book_images %}
+          {% if img.preview_url %}
           <div class="gallery-item" onclick="openLightbox({{ forloop.index0 }})">
-            <img src="{{ img.image.url }}" alt="{{ book.title }} image {{ forloop.counter }}" loading="lazy">
+            <img src="{{ img.preview_url }}" alt="{{ book.title }} image {{ forloop.counter }}" loading="lazy">
           </div>
           {% endif %}
         {% endfor %}
@@ -455,7 +452,6 @@
       <div class="gallery-empty">📷 No additional images available for this book.</div>
     {% endif %}
   </div>
-  {% endwith %}
 
 </div>
 
@@ -469,8 +465,9 @@
 </div>
 
 <script>
+{# Build lightbox URL array from book_images using preview_url #}
 const bookImages = [
-  {% for img in book_images %}{% if img.image %}"{{ img.image.url }}",{% endif %}{% endfor %}
+  {% for img in book_images %}{% if img.preview_url %}"{{ img.preview_url|escapejs }}",{% endif %}{% endfor %}
 ];
 let currentIdx = 0;
 
@@ -512,7 +509,7 @@ document.addEventListener('keydown', e => {
 <!-- ═══════════════════════════════════════════════════════════════════════════
      GA4 Standard Ecommerce — add_to_cart event (Hard Book)
      Called by onsubmit on each cart/buy form above.
-════════════════════════════════════════════════════════════════════════════ -->
+═══════════════════════════════════════════════════════════════════════════ -->
 <script>
   function ga4PushBookAddToCart(e, form) {
     window.dataLayer = window.dataLayer || [];
