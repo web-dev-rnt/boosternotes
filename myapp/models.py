@@ -32,6 +32,9 @@ class HardBookImage(models.Model):
     book = models.ForeignKey(HardBook, on_delete=models.CASCADE, related_name='images', verbose_name="Book")
     image = models.ImageField(upload_to='hardbooks/images/', verbose_name="Book Image", blank=True, null=True)
     dropbox_path = models.CharField(max_length=500, blank=True, null=True)
+    # ── Cached Dropbox URL fields (avoids live API call on every page load) ──
+    dropbox_image_url_cached = models.CharField(max_length=1000, blank=True, null=True, verbose_name="Cached Dropbox Image URL")
+    dropbox_image_url_expires = models.DateTimeField(blank=True, null=True, verbose_name="Cached Image URL Expiry")
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -41,6 +44,43 @@ class HardBookImage(models.Model):
 
     def __str__(self):
         return f"{self.book.title} - Image"
+
+    @property
+    def image_url(self):
+        """
+        Returns a working image URL.
+        Priority: valid cached Dropbox URL > refresh from Dropbox (then cache) > stale cache > local file.
+        Dropbox temporary links last ~4 hours; we refresh when <30 min remain.
+        """
+        # 1. Return cached URL if still fresh (more than 30 min remaining)
+        if self.dropbox_image_url_cached and self.dropbox_image_url_expires:
+            if self.dropbox_image_url_expires > timezone.now() + timedelta(minutes=30):
+                return self.dropbox_image_url_cached
+
+        # 2. Refresh from Dropbox
+        if self.dropbox_path:
+            try:
+                from .dropbox_utils import DropboxManager
+                link = DropboxManager.get_temporary_link(self.dropbox_path)
+                if link:
+                    HardBookImage.objects.filter(pk=self.pk).update(
+                        dropbox_image_url_cached=link,
+                        dropbox_image_url_expires=timezone.now() + timedelta(hours=4),
+                    )
+                    return link
+            except Exception:
+                pass
+            # 3. Dropbox unreachable — serve stale cache rather than broken image
+            if self.dropbox_image_url_cached:
+                return self.dropbox_image_url_cached
+
+        # 4. Final fallback: local file
+        if self.image:
+            try:
+                return self.image.url
+            except Exception:
+                pass
+        return None
 
 
 class SiteSetting(models.Model):
@@ -268,6 +308,9 @@ class ELibraryModel(models.Model):
     thumbnail = models.ImageField(upload_to='elibrary/thumbnails/', verbose_name="Thumbnail Image", blank=True, null=True)
     # Dropbox path for thumbnail — this is the source of truth after backup/restore
     dropbox_thumbnail_path = models.CharField(max_length=500, blank=True, null=True, verbose_name="Dropbox Thumbnail Path")
+    # ── Cached Dropbox URL fields (avoids live API call on every page load) ──
+    dropbox_thumbnail_url_cached = models.CharField(max_length=1000, blank=True, null=True, verbose_name="Cached Dropbox Thumbnail URL")
+    dropbox_thumbnail_url_expires = models.DateTimeField(blank=True, null=True, verbose_name="Cached Thumbnail URL Expiry")
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, blank=True, null=True, related_name='elibrary_courses')
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -283,16 +326,40 @@ class ELibraryModel(models.Model):
 
     @property
     def thumbnail_url(self):
-        """Returns a working image URL regardless of whether this is a fresh upload
-        or a post-backup-restore scenario where local files are gone.
-        Priority: Dropbox temp link > local thumbnail.url > None
         """
+        Returns a working image URL regardless of whether this is a fresh upload
+        or a post-backup-restore scenario where local files are gone.
+
+        Priority:
+          1. Valid cached Dropbox URL (still has >30 min remaining) — no API call
+          2. Refresh from Dropbox + store in cache — one API call, then cached for ~4 h
+          3. Stale cache — serves the old URL if Dropbox is unreachable
+          4. Local thumbnail.url
+          5. None
+        """
+        # 1. Serve from cache if still fresh
+        if self.dropbox_thumbnail_url_cached and self.dropbox_thumbnail_url_expires:
+            if self.dropbox_thumbnail_url_expires > timezone.now() + timedelta(minutes=30):
+                return self.dropbox_thumbnail_url_cached
+
+        # 2. Refresh from Dropbox
         if self.dropbox_thumbnail_path:
             try:
                 from .dropbox_utils import DropboxManager
-                return DropboxManager.get_temporary_link(self.dropbox_thumbnail_path)
+                link = DropboxManager.get_temporary_link(self.dropbox_thumbnail_path)
+                if link:
+                    ELibraryModel.objects.filter(pk=self.pk).update(
+                        dropbox_thumbnail_url_cached=link,
+                        dropbox_thumbnail_url_expires=timezone.now() + timedelta(hours=4),
+                    )
+                    return link
             except Exception:
                 pass
+            # 3. Dropbox unreachable — serve stale cache rather than broken image
+            if self.dropbox_thumbnail_url_cached:
+                return self.dropbox_thumbnail_url_cached
+
+        # 4. Fallback to local file
         if self.thumbnail:
             try:
                 return self.thumbnail.url
