@@ -1,15 +1,20 @@
 """
-Safe idempotent migration that adds the four cached-URL fields.
+Safe idempotent migration — adds ALL Dropbox-related columns that models.py
+defines but that may be missing from the live database.
 
-Uses RunPython instead of AddField so it checks whether each column already
-exists before issuing ALTER TABLE. This means the migration is safe to run
-even if a previous crashed deploy already created some or all of the columns.
+Uses RunPython + PRAGMA table_info() so each ALTER TABLE is only issued when
+the column is genuinely absent. Safe to run on:
+  - Fresh databases          (all columns missing → all added)
+  - Partially-migrated DBs   (some columns present → only missing ones added)
+  - Fully-migrated DBs       (all columns present → nothing happens)
 
-Columns added (all nullable/blank):
-  myapp_elibrarymodel  .dropbox_thumbnail_url_cached  CharField(1000)
-  myapp_elibrarymodel  .dropbox_thumbnail_url_expires DateTimeField
-  myapp_hardbookimage  .dropbox_image_url_cached      CharField(1000)
-  myapp_hardbookimage  .dropbox_image_url_expires     DateTimeField
+Columns managed (all nullable/blank):
+  myapp_elibrarymodel  .dropbox_thumbnail_path        VARCHAR(500)
+  myapp_elibrarymodel  .dropbox_thumbnail_url_cached  VARCHAR(1000)
+  myapp_elibrarymodel  .dropbox_thumbnail_url_expires DATETIME
+  myapp_hardbookimage  .dropbox_path                  VARCHAR(500)
+  myapp_hardbookimage  .dropbox_image_url_cached      VARCHAR(1000)
+  myapp_hardbookimage  .dropbox_image_url_expires     DATETIME
 """
 
 from django.db import migrations, connection
@@ -26,26 +31,14 @@ def add_columns_safe(apps, schema_editor):
     db = schema_editor.connection
 
     specs = [
-        (
-            "myapp_elibrarymodel",
-            "dropbox_thumbnail_url_cached",
-            "VARCHAR(1000) NULL",
-        ),
-        (
-            "myapp_elibrarymodel",
-            "dropbox_thumbnail_url_expires",
-            "DATETIME NULL",
-        ),
-        (
-            "myapp_hardbookimage",
-            "dropbox_image_url_cached",
-            "VARCHAR(1000) NULL",
-        ),
-        (
-            "myapp_hardbookimage",
-            "dropbox_image_url_expires",
-            "DATETIME NULL",
-        ),
+        # ── ELibraryModel ──────────────────────────────────────────────────
+        ("myapp_elibrarymodel", "dropbox_thumbnail_path",        "VARCHAR(500) NULL"),
+        ("myapp_elibrarymodel", "dropbox_thumbnail_url_cached",  "VARCHAR(1000) NULL"),
+        ("myapp_elibrarymodel", "dropbox_thumbnail_url_expires", "DATETIME NULL"),
+        # ── HardBookImage ──────────────────────────────────────────────────
+        ("myapp_hardbookimage", "dropbox_path",                  "VARCHAR(500) NULL"),
+        ("myapp_hardbookimage", "dropbox_image_url_cached",      "VARCHAR(1000) NULL"),
+        ("myapp_hardbookimage", "dropbox_image_url_expires",     "DATETIME NULL"),
     ]
 
     for table, column, col_type in specs:
@@ -58,15 +51,16 @@ def add_columns_safe(apps, schema_editor):
 
 
 def noop_reverse(apps, schema_editor):
-    # We intentionally do not drop columns on rollback to avoid data loss.
+    # Intentionally do not drop columns on rollback — avoids data loss.
     pass
 
 
 class Migration(migrations.Migration):
 
     dependencies = [
-        # Depend on all three previous 0026/0027 no-ops so this runs last
-        # regardless of which combination is recorded in django_migrations.
+        # All three 0026/0027 files are no-ops; depending on all of them
+        # ensures this migration runs last regardless of which subset is
+        # already recorded in django_migrations on any given environment.
         ('myapp', '0026_cache_dropbox_image_urls'),
         ('myapp', '0026_merge_0002_elibrary_and_0025'),
         ('myapp', '0027_cache_dropbox_image_urls'),
