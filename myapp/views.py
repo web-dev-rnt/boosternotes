@@ -34,7 +34,7 @@ def _get_navbar():
     navbar = cache.get('navbar_setting')
     if navbar is None:
         navbar = NavbarSetting.objects.first()
-        cache.set('navbar_setting', navbar, 3600)  # 1 hour
+        cache.set('navbar_setting', navbar, 3600)
     return navbar
 
 def _get_footer():
@@ -50,6 +50,28 @@ def _get_about():
         about = AboutSetting.objects.first()
         cache.set('about_setting', about, 3600)
     return about
+
+
+def _attach_preview_urls(books_qs):
+    """Attach .preview_url to every HardBookImage in the queryset.
+    Works whether images were fetched via prefetch_related or .all().
+    Returns the same queryset/list (mutated in-place).
+    """
+    for book in books_qs:
+        for img in book.images.all():
+            if img.dropbox_path:
+                try:
+                    img.preview_url = DropboxManager.get_temporary_link(img.dropbox_path)
+                except Exception:
+                    img.preview_url = None
+            elif img.image:
+                try:
+                    img.preview_url = img.image.url
+                except Exception:
+                    img.preview_url = None
+            else:
+                img.preview_url = None
+    return books_qs
 
 
 # ── Notifications API ────────────────────────────────────────────────────────────
@@ -110,12 +132,14 @@ def _save_cart(request, cart):
     request.session.modified = True
 
 def _build_cart_items(cart):
-    """Batch-fetch cart items in 2 queries instead of 1 query per item."""
     pdf_ids  = [v['id'] for v in cart.values() if v.get('type') == 'pdf']
     book_ids = [v['id'] for v in cart.values() if v.get('type') == 'book']
 
     pdf_map  = {str(o.id): o for o in ELibraryModel.objects.filter(id__in=pdf_ids).select_related('category')}
     book_map = {str(o.id): o for o in HardBook.objects.filter(id__in=book_ids).prefetch_related('images')}
+
+    # Attach preview_url to book images in cart
+    _attach_preview_urls(book_map.values())
 
     items = []
     for key, data in cart.items():
@@ -124,17 +148,12 @@ def _build_cart_items(cart):
         try:
             if item_type == 'pdf' and item_id in pdf_map:
                 obj   = pdf_map[item_id]
-                thumb = obj.thumbnail.url if obj.thumbnail else None
+                thumb = obj.thumbnail_url
                 items.append({'id': key, 'item_type': 'PDF Course', 'name': obj.name, 'thumbnail': thumb, 'category': obj.category.name if obj.category else '', 'price': obj.current_price, 'original_price': obj.original_price})
             elif item_type == 'book' and item_id in book_map:
                 obj       = book_map[item_id]
                 first_img = next(iter(obj.images.all()), None)
-                thumb     = None
-                if first_img:
-                    if first_img.dropbox_path:
-                        thumb = DropboxManager.get_temporary_link(first_img.dropbox_path)
-                    elif first_img.image:
-                        thumb = first_img.image.url
+                thumb     = first_img.preview_url if first_img else None
                 items.append({'id': key, 'item_type': 'Physical Book', 'name': obj.title, 'thumbnail': thumb, 'category': '', 'price': obj.price, 'original_price': obj.original_price})
         except Exception:
             pass
@@ -277,7 +296,7 @@ def all_categories(request):
 # ── Category Courses (public) ───────────────────────────────────────────────────────
 def category_courses_view(request, category_id):
     category = get_object_or_404(Category, id=category_id, is_active=True)
-    elibrary_courses = ELibraryModel.objects.filter(category=category, is_active=True).select_related('category').only('id', 'name', 'current_price', 'original_price', 'thumbnail', 'category_id')
+    elibrary_courses = ELibraryModel.objects.filter(category=category, is_active=True).select_related('category').only('id', 'name', 'current_price', 'original_price', 'thumbnail', 'dropbox_thumbnail_path', 'category_id')
     hardcopy_courses = HardBook.objects.filter(is_active=True).prefetch_related(Prefetch('images', queryset=HardBookImage.objects.order_by('uploaded_at'))) if hasattr(HardBook, 'category') else []
     total_courses = elibrary_courses.count()
     return render(request, 'category_courses.html', {'category': category, 'elibrary_courses': elibrary_courses, 'hardcopy_courses': hardcopy_courses, 'total_courses': total_courses, 'navbar': _get_navbar(), 'footer': _get_footer(), 'cart_count': len(request.session.get('cart', {}))})
@@ -288,12 +307,14 @@ def search(request):
     query = request.GET.get('q', '').strip()
     if query:
         category_results = Category.objects.filter(name__icontains=query, is_active=True)
-        elibrary_results = ELibraryModel.objects.filter(name__icontains=query, is_active=True).select_related('category').only('id', 'name', 'current_price', 'thumbnail', 'category_id')
+        elibrary_results = ELibraryModel.objects.filter(name__icontains=query, is_active=True).select_related('category').only('id', 'name', 'current_price', 'thumbnail', 'dropbox_thumbnail_path', 'category_id')
         hardbook_results = HardBook.objects.filter(title__icontains=query, is_active=True).prefetch_related(Prefetch('images', queryset=HardBookImage.objects.order_by('uploaded_at')[:1]))
     else:
         category_results = Category.objects.none()
         elibrary_results = ELibraryModel.objects.none()
         hardbook_results = HardBook.objects.none()
+
+    _attach_preview_urls(hardbook_results)
 
     total_results = (category_results.count() + elibrary_results.count() + hardbook_results.count())
     active_coupons = Coupon.objects.filter(is_active=True, expiry_date__gte=timezone.now().date(), usage_limit__gt=F('times_used')).order_by('-created_at')[:6]
@@ -305,15 +326,7 @@ def search(request):
 @login_required
 def hard_books_list(request):
     books = HardBook.objects.prefetch_related('images').all()
-    # Attach Dropbox preview URLs to each image
-    for book in books:
-        for img in book.images.all():
-            if img.dropbox_path:
-                img.preview_url = DropboxManager.get_temporary_link(img.dropbox_path)
-            elif img.image:
-                img.preview_url = img.image.url
-            else:
-                img.preview_url = None
+    _attach_preview_urls(books)
     return render(request, 'hard_books_list.html', {'books': books})
 
 
@@ -322,15 +335,7 @@ def hard_books_public(request):
     books = HardBook.objects.filter(is_active=True).prefetch_related(
         Prefetch('images', queryset=HardBookImage.objects.order_by('uploaded_at'))
     ).order_by('-created_at')
-    # Attach Dropbox preview URLs
-    for book in books:
-        for img in book.images.all():
-            if img.dropbox_path:
-                img.preview_url = DropboxManager.get_temporary_link(img.dropbox_path)
-            elif img.image:
-                img.preview_url = img.image.url
-            else:
-                img.preview_url = None
+    _attach_preview_urls(books)
     return render(request, 'hard_books_public.html', {
         'books': books,
         'navbar': _get_navbar(),
@@ -353,7 +358,7 @@ def hard_book_add(request):
                     folder_path=DropboxPaths.hardbooks_images(),
                 )
                 if result['success']:
-                    HardBookImage.objects.create(book=book, image=file_obj, dropbox_path=result['dropbox_path'])
+                    HardBookImage.objects.create(book=book, dropbox_path=result['dropbox_path'])
                 else:
                     messages.error(request, f"Image {i} upload failed: {result['error']}")
             messages.success(request, 'Hard book added successfully!')
@@ -380,7 +385,7 @@ def hard_book_edit(request, pk):
                     folder_path=DropboxPaths.hardbooks_images(),
                 )
                 if result['success']:
-                    HardBookImage.objects.create(book=book, image=file_obj, dropbox_path=result['dropbox_path'])
+                    HardBookImage.objects.create(book=book, dropbox_path=result['dropbox_path'])
                 else:
                     messages.error(request, f"Image upload failed: {result['error']}")
             messages.success(request, 'Hard book updated successfully!')
@@ -388,16 +393,8 @@ def hard_book_edit(request, pk):
         messages.error(request, 'Please correct the errors below.')
     else:
         form = HardBookForm(instance=book)
-    # Attach Dropbox preview URLs for edit page
-    existing_images = []
-    for img in book.images.all():
-        if img.dropbox_path:
-            img.preview_url = DropboxManager.get_temporary_link(img.dropbox_path)
-        elif img.image:
-            img.preview_url = img.image.url
-        else:
-            img.preview_url = None
-        existing_images.append(img)
+    existing_images = list(book.images.all())
+    _attach_preview_urls([book])
     return render(request, 'hard_book_form.html', {'form': form, 'book': book, 'existing_images': existing_images})
 
 
@@ -967,17 +964,14 @@ def home(request):
         .order_by('name')
     )
 
-    popular_pdfs = ELibraryModel.objects.filter(is_active=True).select_related('category').only('id', 'name', 'current_price', 'original_price', 'thumbnail', 'category_id').order_by('-created_at')[:8]
+    popular_pdfs = ELibraryModel.objects.filter(is_active=True).select_related('category').order_by('-created_at')[:8]
 
-    hard_books = HardBook.objects.filter(is_active=True).prefetch_related(Prefetch('images', queryset=HardBookImage.objects.order_by('uploaded_at'))).order_by('-created_at')[:8]
-    for book in hard_books:
-        for img in book.images.all():
-            if img.dropbox_path:
-                img.preview_url = DropboxManager.get_temporary_link(img.dropbox_path)
-            elif img.image:
-                img.preview_url = img.image.url
-            else:
-                img.preview_url = None
+    hard_books = list(
+        HardBook.objects.filter(is_active=True).prefetch_related(
+            Prefetch('images', queryset=HardBookImage.objects.order_by('uploaded_at'))
+        ).order_by('-created_at')[:8]
+    )
+    _attach_preview_urls(hard_books)
 
     return render(request, 'index.html', {
         'navbar': navbar, 'site_settings': navbar,
@@ -997,15 +991,8 @@ def hard_book_detail(request, pk):
         ),
         pk=pk, is_active=True
     )
-    book_images = []
-    for img in book.images.all():
-        if img.dropbox_path:
-            img.preview_url = DropboxManager.get_temporary_link(img.dropbox_path)
-        elif img.image:
-            img.preview_url = img.image.url
-        else:
-            img.preview_url = None
-        book_images.append(img)
+    _attach_preview_urls([book])
+    book_images = list(book.images.all())
     return render(request, 'hard_book_detail.html', {
         'book': book,
         'book_images': book_images,

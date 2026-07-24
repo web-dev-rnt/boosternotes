@@ -30,7 +30,7 @@ class HardBook(models.Model):
 class HardBookImage(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     book = models.ForeignKey(HardBook, on_delete=models.CASCADE, related_name='images', verbose_name="Book")
-    image = models.ImageField(upload_to='hardbooks/images/', verbose_name="Book Image")
+    image = models.ImageField(upload_to='hardbooks/images/', verbose_name="Book Image", blank=True, null=True)
     dropbox_path = models.CharField(max_length=500, blank=True, null=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
@@ -265,7 +265,9 @@ class ELibraryModel(models.Model):
     description = models.TextField(verbose_name="Description")
     original_price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)], verbose_name="Original Price")
     current_price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)], verbose_name="Current Price")
-    thumbnail = models.ImageField(upload_to='elibrary/thumbnails/', verbose_name="Thumbnail Image")
+    thumbnail = models.ImageField(upload_to='elibrary/thumbnails/', verbose_name="Thumbnail Image", blank=True, null=True)
+    # Dropbox path for thumbnail — this is the source of truth after backup/restore
+    dropbox_thumbnail_path = models.CharField(max_length=500, blank=True, null=True, verbose_name="Dropbox Thumbnail Path")
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, blank=True, null=True, related_name='elibrary_courses')
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -279,12 +281,31 @@ class ELibraryModel(models.Model):
     def __str__(self):
         return self.name
 
+    @property
+    def thumbnail_url(self):
+        """Returns a working image URL regardless of whether this is a fresh upload
+        or a post-backup-restore scenario where local files are gone.
+        Priority: Dropbox temp link > local thumbnail.url > None
+        """
+        if self.dropbox_thumbnail_path:
+            try:
+                from .dropbox_utils import DropboxManager
+                return DropboxManager.get_temporary_link(self.dropbox_thumbnail_path)
+            except Exception:
+                pass
+        if self.thumbnail:
+            try:
+                return self.thumbnail.url
+            except Exception:
+                pass
+        return None
+
 
 class ELibraryPDF(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     course = models.ForeignKey(ELibraryModel, on_delete=models.CASCADE, related_name='pdfs')
     pdf_name = models.CharField(max_length=200)
-    pdf_file = models.FileField(upload_to='elibrary/pdfs/')
+    pdf_file = models.FileField(upload_to='elibrary/pdfs/', blank=True, null=True)
     dropbox_path = models.CharField(max_length=500, blank=True, null=True)
     is_active = models.BooleanField(default=True)
     is_demo = models.BooleanField(
@@ -326,32 +347,27 @@ class Order(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order_number = models.CharField(max_length=20, unique=True, editable=False)
 
-    # Customer details
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders')
     full_name = models.CharField(max_length=200)
     email = models.EmailField()
     mobile = models.CharField(max_length=15)
 
-    # Delivery address (for physical books)
     address = models.TextField(blank=True, null=True)
     city = models.CharField(max_length=100, blank=True, null=True)
     state = models.CharField(max_length=100, blank=True, null=True)
     pincode = models.CharField(max_length=10, blank=True, null=True)
     country = models.CharField(max_length=100, default='India')
 
-    # Pricing
     subtotal = models.DecimalField(max_digits=10, decimal_places=2)
     discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     grand_total = models.DecimalField(max_digits=10, decimal_places=2)
     coupon = models.ForeignKey(Coupon, on_delete=models.SET_NULL, null=True, blank=True)
 
-    # Payment
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='razorpay')
     razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)
     razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
     razorpay_signature = models.CharField(max_length=200, blank=True, null=True)
 
-    # Status
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     is_paid = models.BooleanField(default=False)
     paid_at = models.DateTimeField(null=True, blank=True)
@@ -392,7 +408,7 @@ class OrderItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items')
     item_type = models.CharField(max_length=10, choices=ITEM_TYPE_CHOICES)
-    item_id = models.CharField(max_length=100)      # UUID stored as string
+    item_id = models.CharField(max_length=100)
     item_name = models.CharField(max_length=300)
     item_price = models.DecimalField(max_digits=10, decimal_places=2)
     quantity = models.PositiveIntegerField(default=1)
