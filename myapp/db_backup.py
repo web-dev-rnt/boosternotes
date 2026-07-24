@@ -20,59 +20,13 @@ def get_db_path():
     )
 
 
-def backup_images_to_dropbox(dbx, timestamp):
-    """
-    Copies all image files from eLibrary and HardBooks/Images into
-    BoosterNotes/Backups/images_<timestamp>/ on Dropbox.
-    Silently skips folders that don't exist yet.
-    """
-    # These are the actual Dropbox paths (no leading slash yet)
-    image_folders = [
-        DropboxPaths.ELIBRARY,
-        f"{DropboxPaths.HARDBOOKS}/Images",
-    ]
-    backup_root = f"/{DropboxPaths.BACKUPS}/images_{timestamp}"
-
-    for folder in image_folders:
-        dropbox_folder = f"/{folder}"   # add leading slash for API calls
-        try:
-            result = dbx.files_list_folder(dropbox_folder, recursive=True)
-            entries = list(result.entries)
-
-            while result.has_more:
-                result = dbx.files_list_folder_continue(result.cursor)
-                entries.extend(result.entries)
-
-            for entry in entries:
-                if not isinstance(entry, dropbox.files.FileMetadata):
-                    continue
-                try:
-                    _, res = dbx.files_download(entry.path_lower)
-                    # Strip the BoosterNotes root prefix to get relative path
-                    root_lower = f"/{DropboxPaths.ROOT.lower()}"
-                    relative = entry.path_lower.replace(root_lower, "", 1)
-                    dest = f"{backup_root}{relative}"
-                    dbx.files_upload(
-                        res.content,
-                        dest,
-                        mode=dropbox.files.WriteMode.overwrite
-                    )
-                except Exception:
-                    pass
-
-        except dropbox.exceptions.ApiError:
-            pass
-
-
 def backup_to_dropbox():
     """
-    Uploads db.sqlite3 AND all Dropbox-stored images to Dropbox under
-    BoosterNotes/Backups/.
+    Uploads db.sqlite3 to Dropbox under BoosterNotes/Backups/.
 
     Saves:
       1. BoosterNotes/Backups/db_latest.sqlite3
       2. BoosterNotes/Backups/db_<timestamp>.sqlite3
-      3. BoosterNotes/Backups/images_<timestamp>/
 
     Returns the timestamp string on success.
     """
@@ -96,8 +50,6 @@ def backup_to_dropbox():
         mode=dropbox.files.WriteMode.add
     )
 
-    backup_images_to_dropbox(dbx, timestamp)
-
     return timestamp
 
 
@@ -119,43 +71,6 @@ def restore_from_dropbox(history_filename=None):
 
     with open(db_path, 'wb') as f:
         f.write(res.content)
-
-
-def restore_images_from_dropbox(timestamp):
-    """
-    Restores images from a specific timestamped image backup back to their
-    original BoosterNotes/eLibrary/ and BoosterNotes/HardBooks/ locations.
-    """
-    dbx = get_dropbox_client()
-    backup_folder = f"/{DropboxPaths.BACKUPS}/images_{timestamp}"
-    backup_lower  = backup_folder.lower()
-    root_prefix   = f"/{DropboxPaths.ROOT.lower()}"
-
-    try:
-        result = dbx.files_list_folder(backup_folder, recursive=True)
-        entries = list(result.entries)
-
-        while result.has_more:
-            result = dbx.files_list_folder_continue(result.cursor)
-            entries.extend(result.entries)
-
-        for entry in entries:
-            if not isinstance(entry, dropbox.files.FileMetadata):
-                continue
-            try:
-                _, res = dbx.files_download(entry.path_lower)
-                relative = entry.path_lower.replace(backup_lower, "", 1)
-                dest = f"{root_prefix}{relative}"
-                dbx.files_upload(
-                    res.content,
-                    dest,
-                    mode=dropbox.files.WriteMode.overwrite
-                )
-            except Exception:
-                pass
-
-    except dropbox.exceptions.ApiError:
-        pass
 
 
 def list_backups():
