@@ -239,8 +239,8 @@
         <div class="book-card-wrapper" data-title="{{ book.title|lower }}" data-author="{{ book.author|lower|default:'' }}">
           <a href="{% url 'hard_book_detail' book.pk %}" class="book-card">
             <div class="book-card-img">
-              {% if first_img and first_img.image %}
-                <img src="{{ first_img.image.url }}" alt="{{ book.title }}" loading="lazy">
+              {% if first_img and first_img.preview_url %}
+                <img src="{{ first_img.preview_url }}" alt="{{ book.title }}" loading="lazy">
               {% else %}
                 📗
               {% endif %}
