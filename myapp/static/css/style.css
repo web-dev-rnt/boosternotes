@@ -1007,9 +1007,8 @@
       .desktop-banner,.mobile-banner{display:none}
       .auth-actions{gap:6px}
       .auth-btn{padding:8px 12px;font-size:0.75rem;min-height:38px}
-      /* ── FIX: push notif/profile/ham group to the right ── */
-      .logo-wrap{flex:1 1 auto;max-width:none}
-      .notif-wrap{margin-left:auto}
+      /* Keep logo + login/signup + hamburger clustered on the left, not pushed to the right edge */
+      .logo-wrap{flex:0 1 auto;max-width:none}
     }
 
     @media (max-width:640px){
@@ -1054,9 +1053,8 @@
       .auth-actions{gap:5px}
       .auth-btn{padding:7px 10px;font-size:0.7rem;min-height:36px;gap:4px;box-shadow:none}
       .auth-btn.login-btn .btn-icon{display:none}
-      /* ── FIX: push notif/profile/ham group to the right ── */
-      .logo-wrap{flex:1;overflow:hidden;max-width:140px}
-      .notif-wrap{margin-left:auto}
+      /* Keep logo + login/signup + hamburger clustered on the left, not pushed to the right edge */
+      .logo-wrap{flex:0 1 auto;overflow:hidden;max-width:140px}
     }
 
     @media (max-width:420px){
